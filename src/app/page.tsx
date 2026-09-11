@@ -8,6 +8,24 @@ type PackageType = "hourly" | "daily" | null;
 type DriveType = "self" | "chauffeur" | null;
 type HoursOption = 8 | 10 | 12 | 24 | null;
 
+const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+
+/** Returns a Date that is exactly 2 hours from now */
+const getMinPickupDateTime = () => new Date(Date.now() + TWO_HOURS_MS);
+
+/** Format a Date to YYYY-MM-DD (for <input type="date">) */
+const toDateInputValue = (d: Date) => d.toISOString().split("T")[0];
+
+/** Format a Date to HH:MM (for <input type="time">) */
+const toTimeInputValue = (d: Date) => d.toTimeString().slice(0, 5); // "HH:MM"
+
+/** True when the chosen pickup is at least 2 hours in the future */
+const isPickupValid = (date: string, time: string): boolean => {
+  if (!date || !time) return false;
+  const selected = new Date(`${date}T${time}`);
+  return selected.getTime() >= getMinPickupDateTime().getTime();
+};
+
 interface BookingState {
   packageType: PackageType;
   driveType: DriveType;
@@ -156,15 +174,25 @@ export default function BookingPage() {
       case 2:
         return !!booking.driveType;
       case 3:
-        if (booking.packageType === "daily") {
-          return (
-            booking.pickupDate &&
-            booking.pickupTime &&
-            booking.returnDate &&
-            booking.returnTime
-          );
+        // Common requirement: pickup must be ≥ 2 h from now
+        if (!isPickupValid(booking.pickupDate, booking.pickupTime)) {
+          return false;
         }
-        return booking.pickupDate && booking.pickupTime && !!booking.hours;
+
+        if (booking.packageType === "daily") {
+          // All four fields filled + return after pickup
+          if (!booking.returnDate || !booking.returnTime) {
+            return false;
+          }
+          const pickup = new Date(
+            `${booking.pickupDate}T${booking.pickupTime}`,
+          );
+          const ret = new Date(`${booking.returnDate}T${booking.returnTime}`);
+          return ret > pickup;
+        }
+
+        // Hourly package
+        return !!booking.hours;
       case 4:
         return !!selectedCar;
       default:
@@ -467,9 +495,13 @@ export default function BookingPage() {
                       ? "Select when you need the vehicle and when you’ll return it"
                       : "Choose your pickup date, time, and duration"}
                   </p>
+                  <p className="text-xs text-[#c9a227] mt-1">
+                    Bookings must be made at least 2 hours in advance
+                  </p>
                 </div>
 
                 <div className="space-y-5 max-w-lg mx-auto">
+                  {/* Pickup Date + Time */}
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-[#c9a227] mb-1.5">
@@ -478,11 +510,22 @@ export default function BookingPage() {
                       <input
                         type="date"
                         value={booking.pickupDate}
-                        onChange={(e) => update("pickupDate", e.target.value)}
-                        min={new Date().toISOString().split("T")[0]}
+                        onChange={(e) => {
+                          update("pickupDate", e.target.value);
+                          // Clear time if the new date makes the previous time invalid
+                          // (optional UX nicety)
+                          if (
+                            booking.pickupTime &&
+                            !isPickupValid(e.target.value, booking.pickupTime)
+                          ) {
+                            update("pickupTime", "");
+                          }
+                        }}
+                        min={toDateInputValue(getMinPickupDateTime())}
                         className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-4 py-3 text-white focus:outline-none focus:border-[#c9a227] focus:ring-1 focus:ring-[#c9a227] transition"
                       />
                     </div>
+
                     <div>
                       <label className="block text-sm font-medium text-[#c9a227] mb-1.5">
                         Pickup Time
@@ -491,11 +534,20 @@ export default function BookingPage() {
                         type="time"
                         value={booking.pickupTime}
                         onChange={(e) => update("pickupTime", e.target.value)}
+                        // Dynamically raise the min time when the selected day
+                        // is the earliest allowed day
+                        min={
+                          booking.pickupDate ===
+                          toDateInputValue(getMinPickupDateTime())
+                            ? toTimeInputValue(getMinPickupDateTime())
+                            : undefined
+                        }
                         className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-4 py-3 text-white focus:outline-none focus:border-[#c9a227] focus:ring-1 focus:ring-[#c9a227] transition"
                       />
                     </div>
                   </div>
 
+                  {/* Daily: Return Date + Time */}
                   {booking.packageType === "daily" ? (
                     <div className="grid sm:grid-cols-2 gap-4">
                       <div>
@@ -508,7 +560,7 @@ export default function BookingPage() {
                           onChange={(e) => update("returnDate", e.target.value)}
                           min={
                             booking.pickupDate ||
-                            new Date().toISOString().split("T")[0]
+                            toDateInputValue(getMinPickupDateTime())
                           }
                           className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-4 py-3 text-white focus:outline-none focus:border-[#c9a227] focus:ring-1 focus:ring-[#c9a227] transition"
                         />
@@ -526,6 +578,7 @@ export default function BookingPage() {
                       </div>
                     </div>
                   ) : (
+                    /* Hourly: Duration selector (unchanged) */
                     <div>
                       <label className="block text-sm font-medium text-[#c9a227] mb-3">
                         Duration (Hours)
@@ -552,6 +605,15 @@ export default function BookingPage() {
                       </p>
                     </div>
                   )}
+
+                  {/* Live feedback when the selection is still too soon */}
+                  {booking.pickupDate &&
+                    booking.pickupTime &&
+                    !isPickupValid(booking.pickupDate, booking.pickupTime) && (
+                      <p className="text-sm text-red-400 text-center">
+                        Pickup must be at least 2 hours from now.
+                      </p>
+                    )}
                 </div>
               </div>
             )}
